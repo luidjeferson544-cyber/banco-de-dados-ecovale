@@ -152,7 +152,8 @@ document.getElementById('formEstoque').addEventListener('submit', async (e) => {
     try {
         if (editandoId) {
             await db.collection("estoque").doc(editandoId).update({
-                produto, preco, quantidade, categoria, validade
+                produto, preco, quantidade, categoria, validade,
+                updatedAt: firebase.firestore.FieldValue.serverTimestamp()
             });
             alert("✅ Produto atualizado com sucesso!");
         } else {
@@ -166,16 +167,25 @@ document.getElementById('formEstoque').addEventListener('submit', async (e) => {
         cancelarEdicao();
         carregarEstoque();
     } catch (error) {
-        alert("Erro ao salvar: " + error.message);
+        console.error("Erro completo:", error);
+        if (error.code === "permission-denied") {
+            alert("❌ Erro ao salvar: Missing or insufficient permissions.\n\nVá no Firebase Console > Firestore > Regras e coloque:\n\nallow read, write: if true;");
+        } else {
+            alert("Erro ao salvar: " + error.message);
+        }
     }
 });
 
 // ==================== CARREGAR ====================
 async function carregarEstoque() {
-    const snapshot = await db.collection("estoque").orderBy("timestamp", "desc").get();
-    todosProdutos = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-    atualizarDashboard();
-    filtrarProdutos();
+    try {
+        const snapshot = await db.collection("estoque").orderBy("timestamp", "desc").get();
+        todosProdutos = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+        atualizarDashboard();
+        filtrarProdutos();
+    } catch (error) {
+        console.error(error);
+    }
 }
 
 // ==================== DASHBOARD ====================
@@ -188,7 +198,7 @@ function atualizarDashboard() {
         const dias = Math.ceil((dataVal - hoje) / (86400000));
         if (dias < 0) expired++;
         else if (dias <= 30) expiring++;
-        totalValor += p.preco * p.quantidade;
+        totalValor += (p.preco || 0) * (p.quantidade || 0);
     });
 
     document.getElementById('totalProdutos').textContent = todosProdutos.length;
@@ -204,8 +214,8 @@ function filtrarProdutos() {
     tbody.innerHTML = "";
 
     const filtrados = todosProdutos.filter(p => 
-        p.produto.toLowerCase().includes(termo) || 
-        p.categoria.toLowerCase().includes(termo)
+        (p.produto || "").toLowerCase().includes(termo) || 
+        (p.categoria || "").toLowerCase().includes(termo)
     );
 
     filtrados.forEach(p => {
@@ -220,10 +230,10 @@ function filtrarProdutos() {
         const row = document.createElement("tr");
         row.className = "border-b border-slate-700 hover:bg-slate-800 transition";
         row.innerHTML = `
-            <td class="p-5">${p.produto}</td>
-            <td class="p-5">${p.categoria}</td>
-            <td class="p-5 text-center">R$ ${p.preco.toFixed(2)}</td>
-            <td class="p-5 text-center font-semibold">${p.quantidade}</td>
+            <td class="p-5">${p.produto || ''}</td>
+            <td class="p-5">${p.categoria || ''}</td>
+            <td class="p-5 text-center">R$ ${(p.preco || 0).toFixed(2)}</td>
+            <td class="p-5 text-center font-semibold">${p.quantidade || 0}</td>
             <td class="p-5 text-center">${dataVal.toLocaleDateString('pt-BR')}</td>
             <td class="p-5 text-center">${statusHTML}</td>
             <td class="p-5 text-center space-x-2">
@@ -241,11 +251,11 @@ function editarProduto(id) {
     if (!produto) return;
 
     editandoId = id;
-    document.getElementById('produto').value = produto.produto;
-    document.getElementById('preco').value = produto.preco;
-    document.getElementById('quantidade').value = produto.quantidade;
-    document.getElementById('categoria').value = produto.categoria;
-    document.getElementById('validade').value = produto.validade;
+    document.getElementById('produto').value = produto.produto || '';
+    document.getElementById('preco').value = produto.preco || '';
+    document.getElementById('quantidade').value = produto.quantidade || '';
+    document.getElementById('categoria').value = produto.categoria || '';
+    document.getElementById('validade').value = produto.validade || '';
 
     document.getElementById('btnSalvar').textContent = "Atualizar Produto";
     document.getElementById('btnCancelar').classList.remove('hidden');
@@ -262,12 +272,16 @@ function cancelarEdicao() {
 // ==================== EXCLUIR ====================
 async function excluirProduto(id) {
     if (confirm("Deseja realmente excluir este produto?")) {
-        await db.collection("estoque").doc(id).delete();
-        carregarEstoque();
+        try {
+            await db.collection("estoque").doc(id).delete();
+            carregarEstoque();
+        } catch (error) {
+            alert("Erro ao excluir: " + error.message);
+        }
     }
 }
 
-// ==================== EXPORTAR EXCEL ====================
+// ==================== EXPORTAR E LIMPAR (mantidos iguais) ====================
 function exportarExcel() {
     let csv = "Produto,Categoria,Preço,Quantidade,Validade,Status\n";
     
@@ -275,7 +289,7 @@ function exportarExcel() {
         const dataVal = new Date(p.validade);
         const dias = Math.ceil((dataVal - new Date()) / 86400000);
         const status = dias < 0 ? "VENCIDO" : (dias <= 30 ? "VENCENDO" : "VÁLIDO");
-        csv += `"${p.produto}","${p.categoria}",${p.preco},${p.quantidade},"${p.validade}",${status}\n`;
+        csv += `"${p.produto || ''}","${p.categoria || ''}",${p.preco || 0},${p.quantidade || 0},"${p.validade || ''}",${status}\n`;
     });
 
     const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
@@ -292,7 +306,7 @@ function limparEstoque() {
         }).then(() => {
             alert("Estoque limpo!");
             carregarEstoque();
-        });
+        }).catch(err => alert("Erro: " + err.message));
     }
 }
 
