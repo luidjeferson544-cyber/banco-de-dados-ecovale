@@ -1,0 +1,303 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>EcoValidade - Controle Avançado de Estoque</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.6.0/css/all.min.css">
+    <script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore-compat.js"></script>
+    
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+        body { font-family: 'Inter', sans-serif; }
+        .expiring-soon { background-color: #fefce8; color: #854d0e; }
+        .expired { background-color: #fee2e2; color: #991b1b; font-weight: 700; }
+        .modal { animation: modalPop 0.3s ease; }
+        @keyframes modalPop { from { transform: scale(0.8); opacity: 0; } to { transform: scale(1); opacity: 1; } }
+    </style>
+</head>
+<body class="bg-slate-950 text-slate-200 min-h-screen">
+
+<div class="max-w-7xl mx-auto p-6">
+    <!-- HEADER -->
+    <div class="flex justify-between items-center mb-10">
+        <div class="flex items-center gap-4">
+            <div class="text-5xl">🌱</div>
+            <div>
+                <h1 class="text-5xl font-bold text-emerald-400">EcoValidade</h1>
+                <p class="text-slate-400">Sistema Avançado de Controle de Estoque</p>
+            </div>
+        </div>
+        <div class="flex gap-3">
+            <button onclick="exportarExcel()" class="bg-emerald-600 hover:bg-emerald-700 px-6 py-3 rounded-2xl flex items-center gap-2">
+                <i class="fa-solid fa-file-excel"></i> Exportar Excel
+            </button>
+            <button onclick="limparEstoque()" class="bg-red-600 hover:bg-red-700 px-6 py-3 rounded-2xl flex items-center gap-2">
+                <i class="fa-solid fa-trash"></i> Limpar Tudo
+            </button>
+        </div>
+    </div>
+
+    <!-- DASHBOARD -->
+    <div class="grid grid-cols-1 md:grid-cols-4 gap-6 mb-10">
+        <div class="bg-slate-900 p-6 rounded-3xl border border-slate-700">
+            <p class="text-slate-400 text-sm">Total de Produtos</p>
+            <p id="totalProdutos" class="text-4xl font-bold text-white">0</p>
+        </div>
+        <div class="bg-slate-900 p-6 rounded-3xl border border-slate-700">
+            <p class="text-slate-400 text-sm">Vencendo em 30 dias</p>
+            <p id="expiringCount" class="text-4xl font-bold text-yellow-400">0</p>
+        </div>
+        <div class="bg-slate-900 p-6 rounded-3xl border border-slate-700">
+            <p class="text-slate-400 text-sm">Vencidos</p>
+            <p id="expiredCount" class="text-4xl font-bold text-red-500">0</p>
+        </div>
+        <div class="bg-slate-900 p-6 rounded-3xl border border-slate-700">
+            <p class="text-slate-400 text-sm">Valor Total em Estoque</p>
+            <p id="valorTotal" class="text-4xl font-bold text-emerald-400">R$ 0,00</p>
+        </div>
+    </div>
+
+    <!-- Formulário -->
+    <div class="bg-slate-900 rounded-3xl p-8 mb-10 border border-slate-700">
+        <h2 class="text-2xl font-semibold mb-6 flex items-center gap-3">
+            <i class="fa-solid fa-plus-circle"></i> Cadastrar / Editar Produto
+        </h2>
+        <form id="formEstoque" class="grid grid-cols-1 md:grid-cols-6 gap-5">
+            <input type="hidden" id="editId">
+            <div class="md:col-span-2">
+                <label class="block text-sm mb-2">Produto</label>
+                <input type="text" id="produto" required class="w-full px-5 py-4 bg-slate-800 border border-slate-600 rounded-2xl focus:border-emerald-500 outline-none">
+            </div>
+            <div>
+                <label class="block text-sm mb-2">Preço (R$)</label>
+                <input type="number" id="preco" step="0.01" required class="w-full px-5 py-4 bg-slate-800 border border-slate-600 rounded-2xl focus:border-emerald-500 outline-none">
+            </div>
+            <div>
+                <label class="block text-sm mb-2">Quantidade</label>
+                <input type="number" id="quantidade" min="0" required class="w-full px-5 py-4 bg-slate-800 border border-slate-600 rounded-2xl focus:border-emerald-500 outline-none">
+            </div>
+            <div>
+                <label class="block text-sm mb-2">Categoria</label>
+                <input type="text" id="categoria" required class="w-full px-5 py-4 bg-slate-800 border border-slate-600 rounded-2xl focus:border-emerald-500 outline-none">
+            </div>
+            <div>
+                <label class="block text-sm mb-2">Data de Validade</label>
+                <input type="date" id="validade" required class="w-full px-5 py-4 bg-slate-800 border border-slate-600 rounded-2xl focus:border-emerald-500 outline-none">
+            </div>
+            <div class="flex items-end gap-3">
+                <button type="submit" id="btnSalvar" class="flex-1 bg-emerald-500 hover:bg-emerald-600 h-14 rounded-2xl font-semibold">
+                    Salvar Produto
+                </button>
+                <button type="button" onclick="cancelarEdicao()" class="bg-slate-700 hover:bg-slate-600 h-14 px-6 rounded-2xl hidden" id="btnCancelar">
+                    Cancelar
+                </button>
+            </div>
+        </form>
+    </div>
+
+    <!-- Busca -->
+    <input type="text" id="campoBusca" placeholder="🔍 Buscar por nome, categoria..." 
+           onkeyup="filtrarProdutos()" 
+           class="w-full px-6 py-5 bg-slate-900 border border-slate-700 rounded-3xl focus:border-emerald-500 outline-none text-lg mb-8">
+
+    <!-- Tabela -->
+    <div class="bg-slate-900 rounded-3xl overflow-hidden border border-slate-700">
+        <table class="w-full">
+            <thead class="bg-slate-800">
+                <tr>
+                    <th class="p-5 text-left">Produto</th>
+                    <th class="p-5 text-left">Categoria</th>
+                    <th class="p-5 text-center">Preço</th>
+                    <th class="p-5 text-center">Estoque</th>
+                    <th class="p-5 text-center">Validade</th>
+                    <th class="p-5 text-center">Status</th>
+                    <th class="p-5 text-center">Ações</th>
+                </tr>
+            </thead>
+            <tbody id="tbody" class="text-sm"></tbody>
+        </table>
+    </div>
+</div>
+
+<script>
+// ==================== FIREBASE CONFIG ====================
+const firebaseConfig = {
+    apiKey: "AIzaSyAISNkbXDa8pUD8hEUD1kw_Fha_Kw3JswU",
+    authDomain: "eco-vale.firebaseapp.com",
+    projectId: "eco-vale",
+    storageBucket: "eco-vale.firebasestorage.app",
+    messagingSenderId: "573515523943",
+    appId: "1:573515523943:web:bbf2c29bd533987c3671c2"
+};
+
+firebase.initializeApp(firebaseConfig);
+const db = firebase.firestore();
+
+let todosProdutos = [];
+let editandoId = null;
+
+// ==================== SALVAR / EDITAR ====================
+document.getElementById('formEstoque').addEventListener('submit', async (e) => {
+    e.preventDefault();
+
+    const produto = document.getElementById('produto').value.trim();
+    const preco = parseFloat(document.getElementById('preco').value);
+    const quantidade = parseInt(document.getElementById('quantidade').value);
+    const categoria = document.getElementById('categoria').value.trim();
+    const validade = document.getElementById('validade').value;
+
+    try {
+        if (editandoId) {
+            await db.collection("estoque").doc(editandoId).update({
+                produto, preco, quantidade, categoria, validade
+            });
+            alert("✅ Produto atualizado com sucesso!");
+        } else {
+            await db.collection("estoque").add({
+                produto, preco, quantidade, categoria, validade,
+                timestamp: firebase.firestore.FieldValue.serverTimestamp()
+            });
+            alert("✅ Produto cadastrado com sucesso!");
+        }
+
+        cancelarEdicao();
+        carregarEstoque();
+    } catch (error) {
+        alert("Erro ao salvar: " + error.message);
+    }
+});
+
+// ==================== CARREGAR ====================
+async function carregarEstoque() {
+    const snapshot = await db.collection("estoque").orderBy("timestamp", "desc").get();
+    todosProdutos = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+    atualizarDashboard();
+    filtrarProdutos();
+}
+
+// ==================== DASHBOARD ====================
+function atualizarDashboard() {
+    const hoje = new Date();
+    let expiring = 0, expired = 0, totalValor = 0;
+
+    todosProdutos.forEach(p => {
+        const dataVal = new Date(p.validade);
+        const dias = Math.ceil((dataVal - hoje) / (86400000));
+        if (dias < 0) expired++;
+        else if (dias <= 30) expiring++;
+        totalValor += p.preco * p.quantidade;
+    });
+
+    document.getElementById('totalProdutos').textContent = todosProdutos.length;
+    document.getElementById('expiringCount').textContent = expiring;
+    document.getElementById('expiredCount').textContent = expired;
+    document.getElementById('valorTotal').textContent = `R$ ${totalValor.toFixed(2)}`;
+}
+
+// ==================== FILTRAR ====================
+function filtrarProdutos() {
+    const termo = document.getElementById("campoBusca").value.toLowerCase();
+    const tbody = document.getElementById("tbody");
+    tbody.innerHTML = "";
+
+    const filtrados = todosProdutos.filter(p => 
+        p.produto.toLowerCase().includes(termo) || 
+        p.categoria.toLowerCase().includes(termo)
+    );
+
+    filtrados.forEach(p => {
+        const dataVal = new Date(p.validade);
+        const dias = Math.ceil((dataVal - new Date()) / 86400000);
+
+        let statusHTML = '';
+        if (dias < 0) statusHTML = `<span class="expired px-3 py-1 rounded-full text-xs">VENCIDO</span>`;
+        else if (dias <= 30) statusHTML = `<span class="expiring-soon px-3 py-1 rounded-full text-xs">Vence em ${dias}d</span>`;
+        else statusHTML = `<span class="text-emerald-400">Válido</span>`;
+
+        const row = document.createElement("tr");
+        row.className = "border-b border-slate-700 hover:bg-slate-800 transition";
+        row.innerHTML = `
+            <td class="p-5">${p.produto}</td>
+            <td class="p-5">${p.categoria}</td>
+            <td class="p-5 text-center">R$ ${p.preco.toFixed(2)}</td>
+            <td class="p-5 text-center font-semibold">${p.quantidade}</td>
+            <td class="p-5 text-center">${dataVal.toLocaleDateString('pt-BR')}</td>
+            <td class="p-5 text-center">${statusHTML}</td>
+            <td class="p-5 text-center space-x-2">
+                <button onclick="editarProduto('${p.id}')" class="bg-amber-500 hover:bg-amber-600 px-4 py-2 rounded-xl text-sm">✏️</button>
+                <button onclick="excluirProduto('${p.id}')" class="bg-red-600 hover:bg-red-700 px-4 py-2 rounded-xl text-sm">🗑️</button>
+            </td>
+        `;
+        tbody.appendChild(row);
+    });
+}
+
+// ==================== EDIÇÃO ====================
+function editarProduto(id) {
+    const produto = todosProdutos.find(p => p.id === id);
+    if (!produto) return;
+
+    editandoId = id;
+    document.getElementById('produto').value = produto.produto;
+    document.getElementById('preco').value = produto.preco;
+    document.getElementById('quantidade').value = produto.quantidade;
+    document.getElementById('categoria').value = produto.categoria;
+    document.getElementById('validade').value = produto.validade;
+
+    document.getElementById('btnSalvar').textContent = "Atualizar Produto";
+    document.getElementById('btnCancelar').classList.remove('hidden');
+    window.scrollTo(0, 0);
+}
+
+function cancelarEdicao() {
+    editandoId = null;
+    document.getElementById('formEstoque').reset();
+    document.getElementById('btnSalvar').textContent = "Salvar Produto";
+    document.getElementById('btnCancelar').classList.add('hidden');
+}
+
+// ==================== EXCLUIR ====================
+async function excluirProduto(id) {
+    if (confirm("Deseja realmente excluir este produto?")) {
+        await db.collection("estoque").doc(id).delete();
+        carregarEstoque();
+    }
+}
+
+// ==================== EXPORTAR EXCEL ====================
+function exportarExcel() {
+    let csv = "Produto,Categoria,Preço,Quantidade,Validade,Status\n";
+    
+    todosProdutos.forEach(p => {
+        const dataVal = new Date(p.validade);
+        const dias = Math.ceil((dataVal - new Date()) / 86400000);
+        const status = dias < 0 ? "VENCIDO" : (dias <= 30 ? "VENCENDO" : "VÁLIDO");
+        csv += `"${p.produto}","${p.categoria}",${p.preco},${p.quantidade},"${p.validade}",${status}\n`;
+    });
+
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+    const link = document.createElement("a");
+    link.href = URL.createObjectURL(blob);
+    link.download = `Estoque_EcoValidade_${new Date().toISOString().slice(0,10)}.csv`;
+    link.click();
+}
+
+function limparEstoque() {
+    if (confirm("⚠️ APAGAR TODO O ESTOQUE?\nEsta ação é irreversível!")) {
+        db.collection("estoque").get().then(snapshot => {
+            snapshot.forEach(doc => doc.ref.delete());
+        }).then(() => {
+            alert("Estoque limpo!");
+            carregarEstoque();
+        });
+    }
+}
+
+// Inicialização
+window.onload = carregarEstoque;
+</script>
+</body>
+</html>
